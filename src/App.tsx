@@ -13,7 +13,7 @@ import { VideoPlayerModal } from './components/VideoPlayerModal'
 import { DEFAULT_TEACHERS } from './data/defaultChannels'
 import { languageMeta, mergeLanguages } from './data/languages'
 import { useLibrary } from './hooks/useLibrary'
-import { fetchChannelVideos, lookupChannel } from './lib/api'
+import { fetchChannelVideos, fetchTeacher } from './lib/api'
 import type { Channel, ChannelPreview, Language, Video } from './types'
 
 const BATCH_SIZE = 1
@@ -93,29 +93,28 @@ export default function App() {
     setStatus(null)
     let done = 0
     let failed = 0
+    let lastError = ''
     for (let i = 0; i < pending.length; i += BATCH_SIZE) {
       const batch = pending.slice(i, i + BATCH_SIZE)
       await Promise.all(
         batch.map(async (teacher) => {
           try {
-            const preview = await lookupChannel(teacher.handle)
-            let videosForChannel: Video[] = []
-            try {
-              videosForChannel = await fetchChannelVideos(preview.id)
-            } catch {
-              // Keep the teacher even if their videos fail to load.
-            }
+            const preview = await fetchTeacher(teacher.handle)
             library.addChannel(
               {
-                ...preview,
+                id: preview.id,
                 handle: teacher.handle,
+                name: preview.name,
+                thumbnailUrl: preview.thumbnailUrl,
+                subscriberCount: preview.subscriberCount,
                 language: teacher.language,
                 addedAt: new Date().toISOString(),
               },
-              videosForChannel,
+              preview.videos,
             )
-          } catch {
+          } catch (error) {
             failed += 1
+            lastError = error instanceof Error ? error.message : 'Fetch failed'
           } finally {
             done += 1
             setProgress(`LOADING ${done}/${pending.length}`)
@@ -127,7 +126,7 @@ export default function App() {
     setProgress(null)
     setStatus(
       failed
-        ? `Loaded ${pending.length - failed} teachers. ${failed} could not be fetched.`
+        ? `Loaded ${pending.length - failed} teachers. ${failed} could not be fetched${lastError ? `: ${lastError}` : '.'}`
         : `Loaded ${pending.length} teachers. Click a language tab to see each one.`,
     )
   }

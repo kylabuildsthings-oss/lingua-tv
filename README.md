@@ -18,4 +18,4 @@ Then open the printed local URL. First visit is empty: add a channel, or click *
 - `npm run preview` — serve the build with the same API plugin
 - `npm start` — Express static + API server (run after `npm run build`)
 
-No YouTube API key is required. Channel metadata and video lists are fetched through a local [youtubei.js](https://github.com/LuanRT/YouTube.js) helper.
+No YouTube API key is required. Channel metadata comes from public YouTube pages and video lists from channel RSS feeds, via `/api` (Vite middleware locally, serverless functions on Vercel).

@@ -23,6 +23,10 @@ export async function dispatchApi(method: string, url: URL): Promise<ApiResult> 
       return { status: 400, body: { error: 'Missing channel URL or handle' } }
     }
     const channel = await resolveChannel(query)
+    if (url.searchParams.get('videos') === '1') {
+      const videos = await listChannelVideos(channel.id)
+      return { status: 200, body: { ...channel, videos } }
+    }
     return { status: 200, body: channel }
   }
 

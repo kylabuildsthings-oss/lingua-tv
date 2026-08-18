@@ -1,73 +1,46 @@
-import { Innertube } from 'youtubei.js'
 import type { ChannelPreview, Video } from '../src/types.ts'
 
-let clientPromise: Promise<Innertube> | null = null
-let youtubeQueue: Promise<void> = Promise.resolve()
-
-function getClient(): Promise<Innertube> {
-  if (!clientPromise) {
-    clientPromise = Innertube.create().catch((error) => {
-      clientPromise = null
-      throw error
-    })
-  }
-  return clientPromise
+const YT_HEADERS = {
+  'User-Agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
 }
 
-function enqueue<T>(work: () => Promise<T>): Promise<T> {
-  const run = youtubeQueue.then(work, work)
-  youtubeQueue = run.then(
-    () => undefined,
-    () => undefined,
-  )
-  return run
+async function fetchText(url: string): Promise<string> {
+  const response = await fetch(url, { headers: YT_HEADERS, redirect: 'follow' })
+  if (!response.ok) {
+    throw new Error(`YouTube request failed (${response.status})`)
+  }
+  return response.text()
 }
 
-function asText(value: unknown): string {
-  if (!value) return ''
-  if (typeof value === 'string') return value
-  if (typeof value === 'object' && 'text' in value && typeof value.text === 'string') {
-    return value.text
-  }
-  if (typeof value === 'object' && 'toString' in value) {
-    return String(value)
-  }
-  return ''
+function decodeXml(value: string): string {
+  return value
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&')
 }
 
-function pickThumbnail(thumbs: unknown): string {
-  if (!Array.isArray(thumbs) || thumbs.length === 0) return ''
-  const last = thumbs[thumbs.length - 1] as { url?: string }
-  return last?.url ?? ''
-}
-
-function relativeToIso(text?: string): string {
-  if (!text) return new Date().toISOString()
-  const parsed = Date.parse(text)
-  if (!Number.isNaN(parsed)) return new Date(parsed).toISOString()
-
-  const match = text.match(/(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago/i)
-  if (!match) return new Date().toISOString()
-
-  const amount = Number(match[1])
-  const unit = match[2].toLowerCase()
-  const ms: Record<string, number> = {
-    second: 1000,
-    minute: 60_000,
-    hour: 3_600_000,
-    day: 86_400_000,
-    week: 604_800_000,
-    month: 2_592_000_000,
-    year: 31_536_000_000,
-  }
-  return new Date(Date.now() - amount * (ms[unit] ?? 0)).toISOString()
+function metaContent(html: string, property: string): string {
+  const match =
+    html.match(new RegExp(`<meta[^>]+property="${property}"[^>]+content="([^"]+)"`, 'i')) ||
+    html.match(new RegExp(`<meta[^>]+content="([^"]+)"[^>]+property="${property}"`, 'i'))
+  return match?.[1] ?? ''
 }
 
 function normalizeInput(raw: string): { url: string; handle: string; channelId?: string } {
   const trimmed = raw.trim()
   const channelIdMatch = trimmed.match(/(UC[\w-]{20,})/)
   const handleMatch = trimmed.match(/@[\w.-]+/)
-  const handle = handleMatch?.[0] ?? (trimmed.startsWith('@') ? trimmed : `@${trimmed.replace(/^https?:\/\/(www\.)?youtube\.com\/@?/i, '')}`)
+  const handle =
+    handleMatch?.[0] ??
+    (trimmed.startsWith('@')
+      ? trimmed
+      : `@${trimmed.replace(/^https?:\/\/(www\.)?youtube\.com\/@?/i, '')}`)
 
   if (channelIdMatch) {
     return {
@@ -85,156 +58,76 @@ function normalizeInput(raw: string): { url: string; handle: string; channelId?:
   return { url: `https://www.youtube.com/${cleanHandle}`, handle: cleanHandle }
 }
 
-function durationFromUnknown(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (value && typeof value === 'object') {
-    const record = value as { text?: string; seconds?: number }
-    if (record.text) return record.text
-    if (typeof record.seconds === 'number') {
-      const minutes = Math.floor(record.seconds / 60)
-      const seconds = record.seconds % 60
-      return `${minutes}:${String(seconds).padStart(2, '0')}`
-    }
-  }
-  return ''
-}
-
-function overlayDuration(item: Record<string, unknown>): string {
-  const image = item.content_image as { overlays?: { badges?: { text?: string }[] }[] } | undefined
-  for (const overlay of image?.overlays ?? []) {
-    for (const badge of overlay.badges ?? []) {
-      if (badge.text && /^\d+:\d{2}(:\d{2})?$/.test(badge.text)) return badge.text
-    }
-  }
-  return ''
-}
-
-function publishedFromMetadata(item: Record<string, unknown>): string {
-  const metadata = item.metadata as {
-    metadata?: { metadata_rows?: { metadata_parts?: { text?: { text?: string } }[] }[] }
-  } | undefined
-  for (const row of metadata?.metadata?.metadata_rows ?? []) {
-    for (const part of row.metadata_parts ?? []) {
-      const text = part.text?.text ?? ''
-      if (/\bago\b/i.test(text)) return text
-    }
-  }
-  return asText(item.published)
-}
-
-function mapVideo(item: Record<string, unknown>, channelId: string): Video | null {
-  const type = String(item.type ?? '')
-  const contentType = String(item.content_type ?? '')
-  if (type.includes('Short') || contentType === 'SHORT' || contentType === 'PLAYLIST') {
-    return null
-  }
-
-  const id =
-    (typeof item.content_id === 'string' && item.content_id) ||
-    (typeof item.video_id === 'string' && item.video_id) ||
-    (typeof item.id === 'string' && item.id) ||
-    ''
-  if (!id || id.length < 8) return null
-
-  const metadata = item.metadata as { title?: unknown } | undefined
-  const title = asText(item.title) || asText(metadata?.title) || 'Untitled'
-  const contentImage = item.content_image as { image?: unknown } | undefined
-  const duration =
-    durationFromUnknown(item.duration) || asText(item.length_text) || overlayDuration(item)
-
-  return {
-    id,
-    channelId,
-    title,
-    thumbnailUrl:
-      pickThumbnail(item.thumbnails) ||
-      pickThumbnail(contentImage?.image) ||
-      `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
-    duration,
-    publishedAt: relativeToIso(publishedFromMetadata(item)),
-  }
-}
-
-async function resolveChannelUnqueued(query: string): Promise<ChannelPreview> {
-  const yt = await getClient()
+export async function resolveChannel(query: string): Promise<ChannelPreview> {
   const input = normalizeInput(query)
   let channelId = input.channelId
+  let html = ''
 
   if (!channelId) {
-    try {
-      const endpoint = await yt.resolveURL(input.url)
-      const browseId = endpoint.payload?.browseId as string | undefined
-      if (browseId?.startsWith('UC')) channelId = browseId
-    } catch {
-      channelId = undefined
+    html = await fetchText(input.url)
+    if (/consent\.youtube\.com|Before you continue to YouTube/i.test(html)) {
+      throw new Error('YouTube blocked this server. Try again later.')
     }
-  }
-
-  if (!channelId) {
-    const results = await yt.search(input.handle.replace(/^@/, ''), { type: 'channel' })
-    const first = results.channels?.[0] as { id?: string; author?: { id?: string } } | undefined
-    channelId = first?.id ?? first?.author?.id
+    channelId =
+      html.match(/https:\/\/www\.youtube\.com\/channel\/(UC[\w-]+)/)?.[1] ||
+      html.match(/"externalId":"(UC[\w-]+)"/)?.[1] ||
+      html.match(/"channelId":"(UC[\w-]+)"/)?.[1]
   }
 
   if (!channelId) {
     throw new Error('Could not find that YouTube channel')
   }
 
-  const channel = await yt.getChannel(channelId)
-  const header = channel.header as
-    | { subscribers?: { text?: string }; channel_handle?: { text?: string }; author?: { name?: string; thumbnails?: { url: string }[] } }
-    | undefined
+  if (!html) {
+    try {
+      html = await fetchText(`https://www.youtube.com/channel/${channelId}`)
+    } catch {
+      html = ''
+    }
+  }
 
-  const handle =
-    asText(header?.channel_handle) ||
-    input.handle ||
-    channel.metadata.vanity_channel_url?.split('/').pop() ||
-    `@${channel.metadata.title ?? 'channel'}`
-
-  const thumbnailUrl =
-    pickThumbnail(channel.metadata.avatar) ||
-    pickThumbnail(channel.metadata.thumbnail) ||
-    pickThumbnail(header?.author?.thumbnails)
+  const name =
+    metaContent(html, 'og:title').replace(/ - YouTube$/, '') ||
+    html.match(/"title":"([^"]+)"/)?.[1] ||
+    input.handle.replace(/^@/, '')
+  const thumbnailUrl = metaContent(html, 'og:image')
+  const handleFromPage =
+    html.match(/"vanityChannelUrl":"https?:\/\/(?:www\.)?youtube\.com\/(@[\w.-]+)"/)?.[1] ||
+    input.handle
 
   return {
-    id: channel.metadata.external_id || channelId,
-    handle: handle.startsWith('@') ? handle : `@${handle}`,
-    name: channel.metadata.title || header?.author?.name || 'YouTube Channel',
+    id: channelId,
+    handle: handleFromPage.startsWith('@') ? handleFromPage : `@${handleFromPage}`,
+    name,
     thumbnailUrl,
-    subscriberCount: asText(header?.subscribers) || undefined,
   }
-}
-
-export async function resolveChannel(query: string): Promise<ChannelPreview> {
-  return enqueue(() => resolveChannelUnqueued(query))
-}
-
-async function listChannelVideosUnqueued(channelId: string): Promise<Video[]> {
-  const yt = await getClient()
-  const channel = await yt.getChannel(channelId)
-  const feeds = [channel]
-  if (channel.has_videos) {
-    try {
-      feeds.unshift(await channel.getVideos())
-    } catch {
-      // Fall back to the home feed if the videos tab fails.
-    }
-  }
-
-  const mapped: Video[] = []
-  const seen = new Set<string>()
-  for (const feed of feeds) {
-    for (const item of feed.videos) {
-      const video = mapVideo(item as unknown as Record<string, unknown>, channelId)
-      if (!video || seen.has(video.id)) continue
-      seen.add(video.id)
-      mapped.push(video)
-    }
-  }
-
-  return mapped.slice(0, 30)
 }
 
 export async function listChannelVideos(channelId: string): Promise<Video[]> {
-  return enqueue(() => listChannelVideosUnqueued(channelId))
+  const xml = await fetchText(
+    `https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(channelId)}`,
+  )
+  const entries = [...xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)]
+  return entries.slice(0, 30).flatMap((match) => {
+    const entry = match[1]
+    const id =
+      entry.match(/<yt:videoId>([^<]+)<\/yt:videoId>/)?.[1] ||
+      entry.match(/<id>yt:video:([^<]+)<\/id>/)?.[1]
+    if (!id) return []
+    const title = decodeXml(entry.match(/<title>([\s\S]*?)<\/title>/)?.[1] ?? 'Untitled')
+    const publishedAt = entry.match(/<published>([^<]+)<\/published>/)?.[1] ?? new Date().toISOString()
+    const thumbnailUrl =
+      entry.match(/<media:thumbnail[^>]+url="([^"]+)"/)?.[1] ||
+      `https://i.ytimg.com/vi/${id}/hqdefault.jpg`
+    return [
+      {
+        id,
+        channelId,
+        title,
+        thumbnailUrl,
+        duration: '',
+        publishedAt,
+      },
+    ]
+  })
 }
