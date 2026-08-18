@@ -4,12 +4,11 @@ const FETCH_TIMEOUT_MS = 30_000
 
 async function readJson<T>(response: Response): Promise<T> {
   const contentType = response.headers.get('content-type') ?? ''
+  const raw = await response.text()
   if (!contentType.includes('application/json')) {
-    throw new Error(
-      'The YouTube lookup API is missing on this host. Redeploy with the serverless /api routes.',
-    )
+    throw new Error(raw.slice(0, 180).trim() || `Lookup failed (${response.status})`)
   }
-  const data = (await response.json()) as T & { error?: string }
+  const data = JSON.parse(raw) as T & { error?: string }
   if (!response.ok) {
     throw new Error(data.error || `Request failed (${response.status})`)
   }

@@ -1,4 +1,4 @@
-import type { ChannelPreview, Video } from '../src/types.ts'
+import type { ChannelPreview, Video } from '../src/types'
 
 const YT_HEADERS = {
   'User-Agent':

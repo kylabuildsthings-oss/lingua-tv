@@ -1,4 +1,4 @@
-import { listChannelVideos, resolveChannel } from './youtube.ts'
+import { listChannelVideos, resolveChannel } from './youtube'
 
 export interface ApiResult {
   status: number
