@@ -24,10 +24,8 @@ export function Header({
   return (
     <header className="flex flex-col gap-3 border-b-4 border-purple-dark bg-card p-3 md:flex-row md:items-center">
       <div className="flex items-center justify-between gap-3 md:justify-start">
-        <h1 className="flex items-center gap-2 text-[12px] leading-none text-white md:text-[16px]">
-          LING
-          <span aria-hidden className="inline-block h-4 w-4 border-2 border-purple-pale bg-purple-dark" />
-          TV
+        <h1 className="flex items-center gap-2 text-[10px] leading-none text-white md:text-[14px]">
+          LINGUA TV
         </h1>
         <div className="flex gap-2 md:hidden">
           <button type="button" className="pixel-btn" onClick={onRefresh} disabled={refreshing}>

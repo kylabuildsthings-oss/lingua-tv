@@ -1,4 +1,4 @@
-# LinguaTV
+# Lingua TV
 
 A retro purple CRT dashboard for language-learning YouTube channels. It only shows videos from channels you add, and stores everything in the browser.
 

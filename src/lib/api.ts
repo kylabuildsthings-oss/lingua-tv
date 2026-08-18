@@ -27,7 +27,8 @@ export async function lookupChannel(query: string): Promise<ChannelPreview> {
 }
 
 export async function fetchChannelVideos(channelId: string): Promise<Video[]> {
-  const response = await get(`/api/channel/${encodeURIComponent(channelId)}/videos`)
+  const params = new URLSearchParams({ id: channelId, videos: '1' })
+  const response = await get(`/api/channel?${params}`)
   const data = await readJson<{ videos: Video[] }>(response)
   return data.videos
 }
